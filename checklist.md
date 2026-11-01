@@ -1,0 +1,57 @@
+# Antes de fusionar código de Claude Code: checklist de revisión
+
+
+- [ ] **1. Los tests se ejecutan de verdad (y no se debilitaron).**
+  - Por qué: la [guía oficial](https://code.claude.com/docs/es/best-practices) lo dice así: Claude para cuando el trabajo parece terminado, y «todos los tests pasan» sin más no dice casi nada. Pide siempre la evidencia: el comando que ejecutó y su salida. Y un fallo típico del código de IA es «arreglar» un test rojo cambiando el test: borrándolo, saltándolo o aflojando la aserción.
+  - Cómo comprobarlo: ejecuta tú los tests en la rama, o mira el check del CI del PR; no te fíes solo del resumen.
+  - Tests borrados: `git diff --diff-filter=D --name-only main...HEAD | grep -i test`.
+  - Tests saltados o enfocados en las líneas añadidas: `@unittest.skip`, `pytest.mark.skip` o `xfail`, `it.skip`, `describe.only`, `xit`. El script del final lo hace por ti.
+  - Valores esperados cambiados: lee el diff de la carpeta de tests. Si un valor esperado cambió para coincidir con el resultado nuevo, eso solo es correcto si el comportamiento debía cambiar.
+  - Tests nuevos para lo nuevo: un arreglo de bug sin un test que lo reproduzca vuelve a romperse.
+  - Prevenir: para que Claude no pueda terminar con los tests rotos, la [plantilla de proyecto](https://ctrlia.dev/recetas/plantilla-claude-code.html) trae un hook Stop que los ejecuta cada vez que Claude intenta acabar su turno.
+- [ ] **2. Ningún secreto en el diff.**
+  - Por qué: el código generado a veces deja una clave de ejemplo «temporal», copia un token del entorno en un archivo de configuración o escribe credenciales en un test. Una vez fusionado y subido, el secreto está en el historial aunque lo borres después: hay que rotarlo.
+  - Cómo comprobarlo: busca en las líneas añadidas palabras como `api_key`, `secret_key`, `token`, `password` o `BEGIN … PRIVATE KEY`: `git diff main...HEAD | grep -vE '^\+\+\+' | grep -niE '^\+.*(api[_-]?key|token|passw(or)?d|PRIVATE KEY)'`.
+  - Ningún .env en git: `git diff --name-only main...HEAD | grep -E '(^|/)\.env'`.
+  - Para un análisis serio: usa una herramienta dedicada de detección de secretos en el CI (por ejemplo gitleaks) o el escaneo de secretos de tu plataforma.
+  - Prevenir es mejor: con reglas deny `Read(./.env)` y un hook que bloquea leer secretos (receta [hooks de seguridad](https://ctrlia.dev/recetas/hooks-seguridad.html)), Claude no llega a ver el valor y no puede copiarlo. El paso de CI de la plantilla de proyecto falla si se versiona un `.env`.
+- [ ] **3. Cada dependencia nueva existe y está justificada.**
+  - Por qué: un asistente puede resolver algo con un paquete poco conocido, con uno que no existe (y que alguien podría registrar después con ese nombre) o subir una versión sin que lo pidas. Cada dependencia es mantenimiento y superficie de ataque.
+  - Cómo comprobarlo: lista los manifiestos tocados (`package.json`, archivos de bloqueo, `requirements*.txt`, `pyproject.toml`, `go.mod`, `Cargo.toml`…); el script lo hace.
+  - Para cada paquete nuevo: ¿era necesario? ¿Lo hace ya la biblioteca estándar o algo que ya usas? Comprueba que existe y que es el que crees (`npm view <paquete>` o `pip index versions <paquete>`) y mira su repositorio, autor, descargas y fecha de la última versión.
+  - Avisos conocidos: `npm audit` o `pip-audit`.
+  - Archivo de bloqueo: un cambio enorme por una línea en el manifiesto merece una pregunta.
+  - Prevenir: en CLAUDE.md, «no añadas dependencias sin preguntar»; en settings.json, `ask` para `npm install *` o `pip install *`: un ask pregunta incluso en modo auto.
+- [ ] **4. Licencias y código copiado.**
+  - Por qué: una dependencia nueva trae su licencia, y algunas (por ejemplo, las copyleft fuertes) pueden no encajar con tu proyecto o con lo que tu empresa permite. También puede aparecer un bloque grande de código que parece copiado de otro proyecto.
+  - Cómo comprobarlo: para cada dependencia nueva, mira el campo de licencia en su registro (`npm view <paquete> license`) o en su repositorio.
+  - Muchas dependencias: usa un listador de licencias en el CI (por ejemplo, license-checker en Node o pip-licenses en Python) y compara con la lista que tu equipo acepta.
+  - Código que no encaja: si ves un archivo o una función larga que no se parece al estilo del resto, con comentarios ajenos o un aviso de copyright, pregunta de dónde sale antes de fusionarlo.
+  - Ojo: esta checklist no es asesoría legal; si trabajas para una empresa, sigue su política de licencias.
+- [ ] **5. Nada fuera del alcance de la tarea.**
+  - Por qué: pediste arreglar un bug y la rama trae, además, un refactor de tres archivos, un formateo masivo o un cambio de configuración. Esos extras esconden errores en el ruido y hacen el PR imposible de revisar.
+  - Cómo comprobarlo: `git diff --stat main...HEAD`: ¿cada archivo tiene que ver con la tarea? Si no, pide separarlo en otra rama o revertirlo.
+  - Configuración de la IA y del CI: mira con lupa los cambios en `.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md` y `.github/`. Un cambio ahí altera lo que Claude podrá hacer la próxima vez (una regla allow nueva, un hook, un servidor MCP) o lo que se comprueba en cada PR. El script los lista aparte.
+  - Worktrees: si trabajaste con `claude --worktree`, revisa la rama `worktree-<nombre>` contra la base correcta: por defecto el worktree parte de la rama por defecto remota, no de tu HEAD.
+  - Prevenir: una tarea por rama, prompts con límites claros («no toques X», «sin refactors») y el `ask` para `Edit(/.github/**)` de la plantilla de proyecto.
+- [ ] **6. Una revisión que no vio cómo se escribió.**
+  - Por qué: la guía oficial explica que pasarle la misma tarea a otro agente no da mejor respuesta, pero **un revisor nuevo sí ayuda**, porque no ha visto el razonamiento que produjo el código y no se deja llevar por él.
+  - `/code-review` (o su alias `/review`): revisa los cambios de tu rama y los que no has confirmado buscando errores de corrección. Corre como subagente en segundo plano con su propio contexto y te trae los hallazgos. Puedes apuntarlo a un PR (`/code-review 1234`), a una rama (`/code-review main...mi-rama`) o a una ruta, y pasarle un nivel de esfuerzo: `low` da menos hallazgos y más seguros; de `medium` a `max` amplía la cobertura. Con `--fix` aplica los arreglos, pero ojo: esas ediciones quedan fuera de los puntos de control y `/rewind` no las deshace; usa git.
+  - `/security-review`: analiza el diff de tu rama contra la rama por defecto de origin buscando inyecciones, problemas de autenticación o exposición de datos. Necesita un remoto `origin`.
+  - Un subagente revisor de solo lectura (como `revisor.md` de la plantilla de proyecto) contra una especificación: «usa un subagente para revisar el diff contra SPEC.md, comprueba que cada requisito está implementado y que los casos límite tienen test, informa solo de fallos de corrección y omite el estilo». No quites lo de omitir el estilo: un revisor al que se le pide encontrar problemas siempre encuentra algo. Más sobre esto en [subagentes](https://ctrlia.dev/recetas/subagentes.html).
+- [ ] **7. Una persona entiende el cambio y lo aprueba.**
+  - Por qué: la revisión con IA filtra, pero no decide. La [documentación de seguridad](https://code.claude.com/docs/en/security) de Claude Code lo dice sin rodeos: eres responsable de revisar el código y los comandos propuestos antes de aprobarlos. Y si quien pidió el cambio no sabe explicar qué hace, no está listo para fusionarse.
+  - Cómo comprobarlo: quien abre el PR puede explicar en dos frases qué cambia y por qué, y cómo lo probó (con la salida). La skill `/preparar-pr` de la plantilla de proyecto redacta esa descripción.
+  - Zonas de riesgo: lee el diff entero en autenticación, permisos, dinero, datos de clientes, migraciones de base de datos y despliegue. Ahí la aprobación es siempre humana.
+  - Casos límite que la IA suele saltarse: valores nulos o vacíos, cero, listas vacías, errores de red, entradas sin validar.
+  - Protección de la rama principal: actívala en tu plataforma, exigiendo que pase el CI y al menos una revisión aprobada antes de fusionar.
+  - Atribución: si quieres saber qué commits hizo Claude, por defecto añade una línea de atribución a sus commits y PR; el ajuste `attribution` la cambia o la oculta.
+- [ ] **8. Fusiona con red: commits pequeños y vuelta atrás fácil.**
+  - Por qué: aunque todo lo anterior salga bien, algo se escapará alguna vez. Lo que importa es poder deshacerlo rápido.
+  - Ramas pequeñas: fusiona una tarea cada una. Un PR de 2.000 líneas generado en una tarde no se revisa: se aprueba a ciegas.
+  - Historial reversible: prefiere uno que puedas revertir de un golpe (`git revert <commit>` o un squash merge por PR).
+  - No confíes en `/rewind` como plan de vuelta atrás para lo fusionado: deshace las ediciones de las herramientas de archivos de esa conversación, pero no los cambios hechos solo con Bash, ni los de subagentes, ni los de `/code-review --fix` en segundo plano. Git sí.
+  - Después de fusionar: mira el CI de la rama principal y, si despliegas, los registros del primer despliegue.
+
+---
+Versión completa, con errores típicos y preguntas frecuentes: https://ctrlia.dev/recetas/checklist-revisar-codigo-ia.html · Probado con Claude Code 2.1.316 · MIT

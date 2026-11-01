@@ -1,0 +1,57 @@
+# Before merging Claude Code's code: a review checklist
+
+
+- [ ] **1. The tests really run (and weren't weakened).**
+  - Why: the [official guide](https://code.claude.com/docs/en/best-practices) puts it this way: Claude stops when the work looks finished, and "all tests pass" on its own says almost nothing. Always ask for the evidence: the command it ran and its output. And a typical failure in AI code is "fixing" a red test by changing the test: deleting it, skipping it or loosening the assertion.
+  - How to check it: run the tests yourself on the branch, or look at the PR's CI check; don't rely on the summary alone.
+  - Deleted tests: `git diff --diff-filter=D --name-only main...HEAD | grep -i test`.
+  - Skipped or focused tests in added lines: `@unittest.skip`, `pytest.mark.skip` or `xfail`, `it.skip`, `describe.only`, `xit`. The script at the end does it for you.
+  - Changed expected values: read the diff of the tests folder. If an expected value changed to match the new result, that's only correct if the behavior was supposed to change.
+  - New tests for new code: a bug fix without a test that reproduces it breaks again.
+  - Prevent it: so Claude can't finish with broken tests, the [project template](https://ctrlia.dev/en/recetas/plantilla-claude-code.html) ships a Stop hook that runs them every time Claude tries to end its turn.
+- [ ] **2. No secrets in the diff.**
+  - Why: generated code sometimes leaves a "temporary" sample key, copies a token from the environment into a config file or writes credentials into a test. Once merged and pushed, the secret is in the history even if you delete it later: you have to rotate it.
+  - How to check it: search the added lines for words like `api_key`, `secret_key`, `token`, `password` or `BEGIN … PRIVATE KEY`: `git diff main...HEAD | grep -vE '^\+\+\+' | grep -niE '^\+.*(api[_-]?key|token|passw(or)?d|PRIVATE KEY)'`.
+  - No .env in git: `git diff --name-only main...HEAD | grep -E '(^|/)\.env'`.
+  - For a serious scan: use a dedicated secret-detection tool in CI (gitleaks, for example) or your platform's secret scanning.
+  - Prevention is better: with deny rules for `Read(./.env)` and a hook that blocks reading secrets (the [safety hooks](https://ctrlia.dev/en/recetas/hooks-seguridad.html) recipe), Claude never sees the value and can't copy it. The project template's CI step fails if a `.env` is committed.
+- [ ] **3. Every new dependency exists and is justified.**
+  - Why: an assistant may solve something with a little-known package, with one that doesn't exist (and that someone could register later under that name) or bump a version without you asking. Every dependency is maintenance and attack surface.
+  - How to check it: list the manifests that were touched (`package.json`, lock files, `requirements*.txt`, `pyproject.toml`, `go.mod`, `Cargo.toml`…); the script does it.
+  - For each new package: was it needed? Does the standard library or something you already use do it? Check that it exists and that it's the one you think (`npm view <package>` or `pip index versions <package>`) and look at its repository, author, downloads and date of the latest release.
+  - Known advisories: `npm audit` or `pip-audit`.
+  - Lock file: a huge change for a one-line change in the manifest deserves a question.
+  - Prevent it: in CLAUDE.md, "don't add dependencies without asking"; in settings.json, `ask` for `npm install *` or `pip install *`: an ask asks even in auto mode.
+- [ ] **4. Licenses and copied code.**
+  - Why: a new dependency brings its license, and some (strong copyleft ones, for example) may not fit your project or what your company allows. A large block of code that looks copied from another project can also show up.
+  - How to check it: for each new dependency, look at the license field in its registry (`npm view <package> license`) or in its repository.
+  - Lots of dependencies: use a license lister in CI (for example license-checker in Node or pip-licenses in Python) and compare against the list your team accepts.
+  - Code that doesn't fit: if you see a file or a long function that doesn't look like the rest of the code, with foreign comments or a copyright notice, ask where it comes from before merging it.
+  - Note: this checklist isn't legal advice; if you work for a company, follow its license policy.
+- [ ] **5. Nothing outside the task's scope.**
+  - Why: you asked for a bug fix and the branch also brings a three-file refactor, a mass reformat or a config change. Those extras hide bugs in the noise and make the PR impossible to review.
+  - How to check it: `git diff --stat main...HEAD`: does every file relate to the task? If not, ask for it to be split into another branch or reverted.
+  - AI and CI configuration: look closely at changes in `.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md` and `.github/`. A change there alters what Claude will be able to do next time (a new allow rule, a hook, an MCP server) or what gets checked on every PR. The script lists them separately.
+  - Worktrees: if you worked with `claude --worktree`, review the `worktree-<name>` branch against the right base: by default the worktree starts from the remote default branch, not from your HEAD.
+  - Prevent it: one task per branch, prompts with clear limits ("don't touch X", "no refactors") and the project template's `ask` for `Edit(/.github/**)`.
+- [ ] **6. A review that didn't see how it was written.**
+  - Why: the official guide explains that giving the same task to another agent doesn't produce a better answer, but **a fresh reviewer does help**, because it hasn't seen the reasoning that produced the code and isn't swayed by it.
+  - `/code-review` (or its alias `/review`): reviews your branch's changes and uncommitted ones looking for correctness bugs. It runs as a background subagent with its own context and brings back the findings. You can point it at a PR (`/code-review 1234`), a branch (`/code-review main...my-branch`) or a path, and give it an effort level: `low` gives fewer, more certain findings; `medium` to `max` widens coverage. With `--fix` it applies the fixes, but watch out: those edits stay outside the checkpoints and `/rewind` doesn't undo them; use git.
+  - `/security-review`: analyzes your branch's diff against origin's default branch looking for injections, authentication problems or data exposure. It needs an `origin` remote.
+  - A read-only reviewer subagent (like the project template's `revisor.md`) against a spec: "use a subagent to review the diff against SPEC.md, check that every requirement is implemented and that edge cases have tests, report only correctness failures and skip style". Don't drop the "skip style" part: a reviewer asked to find problems always finds something. More on this in [subagents](https://ctrlia.dev/en/recetas/subagentes.html).
+- [ ] **7. A person understands the change and approves it.**
+  - Why: AI review filters, but it doesn't decide. Claude Code's [security docs](https://code.claude.com/docs/en/security) say it bluntly: you're responsible for reviewing proposed code and commands before approving them. And if the person who asked for the change can't explain what it does, it isn't ready to merge.
+  - How to check it: whoever opens the PR can explain in two sentences what changes and why, and how they tested it (with the output). The project template's `/preparar-pr` skill drafts that description.
+  - Risk areas: read the whole diff in authentication, permissions, money, customer data, database migrations and deployment. There, approval is always human.
+  - Edge cases AI tends to skip: null or empty values, zero, empty lists, network errors, unvalidated input.
+  - Main branch protection: turn it on in your platform, requiring CI to pass and at least one approved review before merging.
+  - Attribution: if you want to know which commits Claude made, by default it adds an attribution line to its commits and PRs; the `attribution` setting changes or hides it.
+- [ ] **8. Merge with a safety net: small commits and an easy way back.**
+  - Why: even if everything above goes well, something will slip through eventually. What matters is being able to undo it quickly.
+  - Small branches: merge one task each. A 2,000-line PR generated in an afternoon doesn't get reviewed: it gets approved blindly.
+  - Revertible history: prefer one you can revert in one go (`git revert <commit>` or a squash merge per PR).
+  - Don't rely on `/rewind` as the rollback plan for merged work: it undoes the file-tool edits from that conversation, but not changes made only with Bash, by subagents or by `/code-review --fix` in the background. Git does.
+  - After merging: check the main branch's CI and, if you deploy, the logs of the first deployment.
+
+---
+Full version, with common mistakes and FAQ: https://ctrlia.dev/en/recetas/checklist-revisar-codigo-ia.html · Tested with Claude Code 2.1.316 · MIT
