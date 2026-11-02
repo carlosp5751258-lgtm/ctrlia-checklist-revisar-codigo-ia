@@ -1,5 +1,7 @@
 # Antes de fusionar código de Claude Code: checklist de revisión (Ctrl+IA)
 
+English version: [README.en.md](README.en.md) (archivos en `en/`).
+
 Ocho comprobaciones antes de fusionar una rama escrita en todo o en parte por Claude Code: tests reales y no debilitados, secretos, dependencias, licencias, alcance, configuración de la IA y del CI, una revisión independiente y la aprobación de una persona. Con un script que te dice dónde mirar primero.
 
 Página completa: https://ctrlia.dev/recetas/checklist-revisar-codigo-ia.html (English: https://ctrlia.dev/en/recetas/checklist-revisar-codigo-ia.html)
@@ -7,7 +9,7 @@ Página completa: https://ctrlia.dev/recetas/checklist-revisar-codigo-ia.html (E
 ## Qué trae
 | Archivo | Para qué |
 | --- | --- |
-| `checklist.md` / `checklist.en.md` | La lista para imprimir o marcar, con el porqué y cómo comprobar cada punto |
+| `checklist.md` / `en/checklist.md` | La lista para imprimir o marcar, con el porqué y cómo comprobar cada punto |
 | `revisar-rama.sh` | Lista archivos cambiados, posibles secretos en líneas añadidas, dependencias tocadas, tests borrados, saltados o enfocados y cambios en `.claude/`, `.mcp.json`, `CLAUDE.md`, `AGENTS.md` y `.github/` |
 
 ## Cómo usarlo
